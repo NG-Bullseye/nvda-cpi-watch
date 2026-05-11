@@ -3,10 +3,12 @@
 
 Tools fuer NVDA-Earnings + US-CPI: historische Werte, Forecasts, Nowcasts,
 und ein aggregierter Trade-Brief. Daten kommen aus BLS (frei),
-Finnhub (free tier, Key noetig) und Cleveland Fed (HTML-scrape).
+Finnhub (free tier, Key noetig), Cleveland Fed (HTML-scrape), TradingView
+(public calendar, kein Key), ForexFactory (Fallback).
 
 Composition Root: dieses File haelt nur Tool-Registry + Routing. Echte
-Logik lebt in bls.py / finnhub.py / clevelandfed.py.
+Logik lebt in bls.py / finnhub.py / clevelandfed.py / tradingview.py /
+forexfactory.py.
 """
 from __future__ import annotations
 
@@ -27,6 +29,8 @@ load_dotenv(Path(__file__).parent / ".env")
 import bls
 import clevelandfed
 import finnhub
+import tradingview
+import forexfactory
 import cache as cache_mod
 
 app = Server("nvda-cpi-watch")
@@ -57,7 +61,17 @@ TOOLS = [
     ),
     types.Tool(
         name="cpi_forecast",
-        description="Market consensus forecast for the next CPI release (Headline + Core if available). Source: Finnhub economic calendar. Requires FINNHUB_API_KEY.",
+        description="DEPRECATED - use cpi_consensus. Finnhub economic calendar (returns index level only, no YoY consensus).",
+        inputSchema={"type": "object", "properties": {}},
+    ),
+    types.Tool(
+        name="cpi_consensus",
+        description=(
+            "Market consensus forecast for the next CPI release: Headline + Core, "
+            "MoM and YoY. Core YoY is derived from Core MoM forecast + BLS year-ago "
+            "Core CPI index (no free API publishes Core YoY directly). Primary source "
+            "TradingView (no key); fallback ForexFactory."
+        ),
         inputSchema={"type": "object", "properties": {}},
     ),
     types.Tool(
@@ -193,52 +207,165 @@ async def _cpi_nowcast() -> dict:
     return await cache_mod.cached("cleveland_nowcast", 3 * 3600, _fetch)
 
 
+async def _cpi_consensus() -> dict:
+    """Aggregated market-consensus forecast for the next CPI release.
+
+    - Headline YoY/MoM + Core MoM: TradingView (primary), ForexFactory (fallback).
+    - Core YoY: derived from Core MoM forecast + BLS year-ago Core index.
+      Formula: core_yoy_forecast = (latest_core_idx * (1 + mom/100)) / year_ago_idx - 1
+      Reason: no free API publishes Core CPI YoY consensus directly.
+    """
+    nxt = bls.next_release_after(date.today())
+    if not nxt:
+        return {"error": "no upcoming release in schedule"}
+    release_date = date.fromisoformat(nxt)
+
+    async def _fetch_consensus():
+        try:
+            tv = await tradingview.fetch_us_cpi_for_release(release_date)
+            if tv:
+                return tv
+        except Exception as e:
+            tv = {"_error": f"tradingview failed: {e}"}
+        try:
+            ff = await forexfactory.fetch_us_cpi_for_release(release_date)
+            ff["_source_chain"] = "tradingview_failed,forexfactory_fallback"
+            return ff
+        except Exception as e:
+            return {"_error": f"both sources failed: tv={tv}; ff={e}"}
+
+    consensus = await cache_mod.cached(f"consensus_{nxt}", 1800, _fetch_consensus)
+
+    # Derive Core YoY if we have Core MoM forecast + enough BLS history.
+    core_mom = consensus.get("core_mom", {}) or {}
+    core_mom_fc = core_mom.get("forecast")
+    derived_core_yoy = None
+    derivation: dict[str, Any] = {"method": None}
+
+    if core_mom_fc is not None:
+        async def _fetch_bls_core_history():
+            today = date.today()
+            return await bls.fetch_series(
+                [bls.SERIES_CORE],
+                start_year=today.year - 2,
+                end_year=today.year,
+            )
+        try:
+            raw = await cache_mod.cached("bls_core_history_2y", 6 * 3600, _fetch_bls_core_history)
+            core_series = bls.normalize(raw.get(bls.SERIES_CORE, []))
+            if core_series:
+                # Latest = newest reported (= month BEFORE the release_date typically).
+                latest = core_series[0]
+                latest_idx = latest["value"]
+                # Print period = the month the release REPORTS ON, i.e. the calendar month
+                # before the release date (April release -> April CPI, May release -> April CPI etc.).
+                # CPI releases publish data for the prior calendar month.
+                print_month = release_date.month - 1 or 12
+                print_year = release_date.year if release_date.month > 1 else release_date.year - 1
+                # Year-ago = same print-month, one year earlier.
+                year_ago = next(
+                    (o for o in core_series
+                     if o["year"] == print_year - 1 and o["month"] == print_month),
+                    None,
+                )
+                if year_ago is not None:
+                    forecast_idx = latest_idx * (1 + core_mom_fc / 100.0)
+                    derived_core_yoy = round((forecast_idx / year_ago["value"] - 1) * 100, 2)
+                    derivation = {
+                        "method": "core_mom_forecast + bls_year_ago_index",
+                        "latest_core_idx": latest_idx,
+                        "latest_period": f"{latest['year']}-{latest['month']:02d}",
+                        "year_ago_core_idx": year_ago["value"],
+                        "year_ago_period": f"{year_ago['year']}-{year_ago['month']:02d}",
+                        "core_mom_forecast_pct": core_mom_fc,
+                        "implied_forecast_idx": round(forecast_idx, 3),
+                    }
+                else:
+                    derivation["method"] = "no year-ago BLS data point yet"
+        except Exception as e:
+            derivation["method"] = f"derivation failed: {e}"
+
+    return {
+        "release_date_et": nxt,
+        "headline_yoy": consensus.get("headline_yoy"),
+        "headline_mom": consensus.get("headline_mom"),
+        "core_mom": consensus.get("core_mom"),
+        "core_yoy": consensus.get("core_yoy"),  # often None - free APIs don't publish it
+        "core_yoy_derived_pct": derived_core_yoy,
+        "core_yoy_derivation": derivation,
+        "raw_consensus": consensus,
+    }
+
+
 async def _cpi_trade_brief() -> dict:
     nxt = bls.next_release_after(date.today())
     latest = await _cpi_latest()
-    forecast = await _cpi_forecast()
+    consensus = await _cpi_consensus()
     try:
         nowcast = await _cpi_nowcast()
     except Exception as e:
         nowcast = {"error": str(e)}
 
-    def _surprise(forecast_v, nowcast_v):
-        if forecast_v is None or nowcast_v is None:
+    def _g(d: dict | None, *path):
+        for p in path:
+            if not isinstance(d, dict):
+                return None
+            d = d.get(p)
+        return d
+
+    def _spread(a, b):
+        if a is None or b is None:
             return None
-        return round(nowcast_v - forecast_v, 2)
+        return round(a - b, 2)
 
-    fc_core = (forecast.get("core") or {}).get("estimate") if isinstance(forecast.get("core"), dict) else None
-    fc_head = (forecast.get("headline") or {}).get("estimate") if isinstance(forecast.get("headline"), dict) else None
-    prev_core = (forecast.get("core") or {}).get("previous") if isinstance(forecast.get("core"), dict) else None
-    prev_head = (forecast.get("headline") or {}).get("previous") if isinstance(forecast.get("headline"), dict) else None
+    # Headline YoY
+    head_prev = _g(consensus, "headline_yoy", "previous") or _g(latest, "headline", "yoy_pct")
+    head_fc = _g(consensus, "headline_yoy", "forecast")
+    head_nowcast = _g(nowcast, "headline", "yoy_pct")
 
-    nc_core_yoy = (nowcast.get("core") or {}).get("yoy_pct") if isinstance(nowcast.get("core"), dict) else None
-    nc_head_yoy = (nowcast.get("headline") or {}).get("yoy_pct") if isinstance(nowcast.get("headline"), dict) else None
+    # Core YoY: consensus from free APIs is usually None - use derived
+    core_prev = _g(consensus, "core_yoy", "previous") or _g(latest, "core", "yoy_pct")
+    core_fc_direct = _g(consensus, "core_yoy", "forecast")
+    core_fc_derived = consensus.get("core_yoy_derived_pct")
+    core_fc = core_fc_direct if core_fc_direct is not None else core_fc_derived
+    core_nowcast = _g(nowcast, "core", "yoy_pct")
+
+    # Core MoM (the value Bloomberg-style traders actually watch on print)
+    core_mom_prev = _g(consensus, "core_mom", "previous")
+    core_mom_fc = _g(consensus, "core_mom", "forecast")
 
     return {
         "release_date_et": nxt,
-        "release_time_de": "14:30 MEZ Sommerzeit",
-        "headline": {
-            "previous": prev_head,
-            "forecast": fc_head,
-            "nowcast_yoy": nc_head_yoy,
-            "surprise_potential_pct_points": _surprise(fc_head, nc_head_yoy),
-            "latest_actual_yoy_pct": (latest.get("headline") or {}).get("yoy_pct"),
+        "release_time_de": "14:30 MEZ Sommerzeit (= 08:30 ET)",
+        "headline_yoy": {
+            "previous": head_prev,
+            "forecast": head_fc,
+            "nowcast": head_nowcast,
+            "forecast_vs_previous_pp": _spread(head_fc, head_prev),
+            "nowcast_vs_forecast_pp": _spread(head_nowcast, head_fc),
         },
-        "core": {
-            "previous": prev_core,
-            "forecast": fc_core,
-            "nowcast_yoy": nc_core_yoy,
-            "surprise_potential_pct_points": _surprise(fc_core, nc_core_yoy),
-            "latest_actual_yoy_pct": (latest.get("core") or {}).get("yoy_pct"),
+        "core_yoy": {
+            "previous": core_prev,
+            "forecast": core_fc,
+            "forecast_source": "derived (core_mom + bls)" if core_fc_direct is None and core_fc_derived is not None else ("consensus_api" if core_fc_direct is not None else None),
+            "nowcast": core_nowcast,
+            "forecast_vs_previous_pp": _spread(core_fc, core_prev),
+            "nowcast_vs_forecast_pp": _spread(core_nowcast, core_fc),
+            "_derivation": consensus.get("core_yoy_derivation"),
+        },
+        "core_mom": {
+            "previous": core_mom_prev,
+            "forecast": core_mom_fc,
+            "note": "Core MoM is the value Bloomberg traders read directly off the print.",
         },
         "interpretation_hint": (
             "Core CPI is the key reading for Fed policy expectations and Big-Tech sensitivity. "
             "Print BELOW forecast tends to be bullish for rate-sensitive Tech (NVDA, etc.); "
             "print ABOVE forecast tends to be bearish. Surprise magnitude drives move size. "
+            "Cross-check Core MoM (Bloomberg headline) and Core YoY (Fed-trajectory). "
             "DATA ONLY - not a recommendation."
         ),
-        "sources": ["BLS", "Finnhub", "Cleveland Fed"],
+        "sources": ["BLS", "TradingView", "ForexFactory (fallback)", "Cleveland Fed"],
     }
 
 
@@ -281,6 +408,7 @@ DISPATCH = {
     "cpi_history": lambda args: _cpi_history(int(args.get("months", 12))),
     "cpi_next_release": lambda args: _cpi_next_release(),
     "cpi_forecast": lambda args: _cpi_forecast(),
+    "cpi_consensus": lambda args: _cpi_consensus(),
     "cpi_nowcast": lambda args: _cpi_nowcast(),
     "cpi_trade_brief": lambda args: _cpi_trade_brief(),
     "nvda_earnings_history": lambda args: _nvda_earnings_history(int(args.get("quarters", 4))),

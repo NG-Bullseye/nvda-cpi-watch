@@ -23,16 +23,25 @@ Stand: 2026-05-11
 
 `FINNHUB_API_KEY` ist in `~/.bashrc` exportiert (analog zu `ESPHOME_API_KEY`). Wird vererbt an `claude`-Prozesse die aus interaktiver Shell starten. `python-dotenv` liest zusaetzlich `.env` falls vorhanden - env wins.
 
+## Konsens-Layer (2026-05-11 hinzu)
+
+- **TradingView Calendar API** als primary (`tradingview.py`, kein Key, kein Quota)
+- **ForexFactory feed** als fallback (`forexfactory.py`)
+- **`cpi_consensus` Tool** liefert Headline YoY/MoM + Core MoM direkt
+- **Core YoY derivation** in `_cpi_consensus()`: (latest_core_idx * (1 + mom/100)) / year_ago_core_idx - 1
+- **`cpi_trade_brief`** befuellt jetzt forecast-Felder automatisch (vorher: null)
+
 ## Bekannte Limitierungen
 
-- **Finnhub `/calendar/economic` liefert fuer US-CPI nur Index-Werte (z.B. 330.21), keinen YoY-Konsens-Forecast.** `estimate`-Feld ist `null`. Bedeutet: Trade-Brief hat kein automatisches Konsens-YoY → manuell setzen oder zweite Quelle (Phase 2: Trading Economics / ForexFactory).
+- **Core CPI YoY Konsens**: keine Free-API publiziert das direkt → wir derivieren mathematisch aus Core MoM Forecast + BLS Vorjahresindex. Exakt sobald MoM-Konsens steht. Source-Transparenz im `_derivation`-Feld.
 - **Cleveland-Fed-Scraper fragil**: Page-Redesign bricht das Tool. Aktuell funktioniert es; bei Bedarf gegen aktuelles HTML neu anpassen.
 - **BLS Release Schedule hardcoded** fuer 2026 in `bls.py` → zum Jahresende aktualisieren.
+- **Finnhub Free** liefert fuer CPI nur Index-Level (`cpi_forecast` Tool DEPRECATED, durch `cpi_consensus` ersetzt).
 
 ## Naechste Schritte
 
 - Agent-Spawn testen: `tmux new-session -d -s nvda-cpi-watch "cd ~/repos/nvda-cpi-watch && claude --mcp-config .mcp.json"`
-- Phase-2 Vorbereitung: zweite Quelle fuer YoY-Konsens-Forecast (siehe `vision.md`)
+- Phase 5: Daytrading-Stack (siehe `vision.md` - Quote/Levels/IV/Earnings-Patterns)
 - NVDA Earnings 2026-05-20 AMC: Pre-Brief kurz vor Release ziehen
 
 ## Risiken

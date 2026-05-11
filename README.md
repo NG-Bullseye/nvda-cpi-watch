@@ -30,9 +30,10 @@ venv/bin/python server.py < /dev/null   # startet stdio-loop, EOF beendet
 | `cpi_latest` | Letzter Headline + Core CPI, MoM/YoY | BLS API v2 |
 | `cpi_history(months=N)` | Reihe der letzten N Monate | BLS API v2 |
 | `cpi_next_release` | Naechster Release-Termin | BLS Schedule (hardcoded) |
-| `cpi_forecast` | Markt-Konsens fuer naechsten Release | Finnhub |
+| `cpi_consensus` | Markt-Konsens: Headline YoY/MoM, Core MoM (direkt) + Core YoY (derived) | TradingView (primary) + ForexFactory (fallback) + BLS |
+| `cpi_forecast` | DEPRECATED. Finnhub-Index, kein YoY. | Finnhub |
 | `cpi_nowcast` | Cleveland Fed Live-Modell | clevelandfed.org (HTML-scrape) |
-| `cpi_trade_brief` | Aggregat: Forecast/Nowcast/Previous + Surprise | alle drei |
+| `cpi_trade_brief` | Aggregat: Konsens (incl. derived Core YoY) + Nowcast + Previous + Spreads | alle |
 | `nvda_earnings_history(quarters=N)` | Letzte N Quartale | Finnhub |
 | `nvda_earnings_next` | Naechster Earnings-Termin | Finnhub |
 
@@ -46,12 +47,18 @@ venv/bin/python server.py < /dev/null   # startet stdio-loop, EOF beendet
 ## Architektur
 
 ```
-server.py            ← MCP stdio, Tool-Registry, Dispatch
+server.py            ← MCP stdio, Tool-Registry, Dispatch, derivations
 ├── bls.py           ← BLS API client + CPI Release Schedule
 ├── finnhub.py       ← Finnhub client (Earnings + Economic Calendar)
 ├── clevelandfed.py  ← HTML scraper fuer Inflation Nowcasting
+├── tradingview.py   ← TradingView calendar (primary consensus source)
+├── forexfactory.py  ← ForexFactory feed (fallback consensus source)
 └── cache.py         ← File-Cache (TTL je Tool)
 ```
+
+**Core YoY Derivation:** Free APIs publizieren keinen direkten Core-CPI-YoY-Konsens (nur Core MoM). Wir berechnen es deterministisch:
+`core_yoy_forecast = (latest_core_idx × (1 + core_mom_forecast/100)) / year_ago_core_idx - 1`
+mit `latest_core_idx` und `year_ago_core_idx` aus BLS. Source-Transparenz im `_derivation`-Feld des Briefs.
 
 Cache-Files unter `cache/*.json` (gitignored). TTLs: BLS 6h, Finnhub Earnings 1h, Forecast 30min, Nowcast 3h.
 
