@@ -8,6 +8,18 @@ On-demand MCP-Server + Repo-Agent. Tools liefern NVDA-Earnings + US-CPI Daten pl
 
 **Status:** in build. Erster Use-Case: CPI-Print am 2026-05-12 14:30 MEZ — Trade-Brief fuer Long-Hebel-Setup auf Tech/NVDA.
 
+## Konsens-Forecast Quellen-Erweiterung (Phase 1.5)
+
+**Bekanntes Problem:** Finnhub `/calendar/economic` liefert fuer US-CPI nur Index-Werte (z.B. 330.21), keinen YoY-Konsens-Forecast (`estimate: null`). Damit fehlt im `cpi_trade_brief` der wichtigste Vergleichswert.
+
+**Optionen fuer zweite Quelle:**
+- **Trading Economics API** — free tier mit `guest:guest` key, liefert CPI YoY consensus.
+- **ForexFactory Calendar** — JSON-Feed `https://www.forexfactory.com/calendar?week=this`, scraping; CPI YoY forecast aus "Forecast"-Spalte.
+- **Investing.com Economic Calendar** — fragiles HTML-scraping, JS-loaded.
+- **Manuelle Hardcode-Fallback** — `forecast_overrides.yaml` mit YoY-Konsens pro Release, manuell gepflegt.
+
+Empfehlung: **Trading Economics als primary**, ForexFactory als fallback.
+
 ## Phase 2 — Watcher (persistent)
 
 Agent laeuft als langlebige tmux-Session. Cron-getrieben prueft er taeglich auf bevorstehende Events:
