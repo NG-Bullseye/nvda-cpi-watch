@@ -31,6 +31,7 @@ import clevelandfed
 import finnhub
 import tradingview
 import forexfactory
+import investing
 import cache as cache_mod
 
 app = Server("nvda-cpi-watch")
@@ -220,14 +221,79 @@ async def _cpi_nowcast() -> dict:
     return await cache_mod.cached("cleveland_nowcast", 3 * 3600, _fetch)
 
 
+def _reconcile_metric(per_source: dict[str, dict | None], key: str) -> dict:
+    """Aggregate one metric (e.g. 'core_mom') across sources.
+
+    Returns:
+        {
+          "forecast": <median of available forecasts, or single value, or None>,
+          "previous": <median of available previous-prints, or None>,
+          "by_source": {"tradingview": 0.4, "forexfactory": 0.3, "investing": 0.3},
+          "spread_pp": 0.1,        # max - min across sources, None if <2 values
+          "outlier_source": "tradingview",  # furthest from median, None if <3 values
+          "n_sources": 3,
+        }
+    """
+    by_source: dict[str, float] = {}
+    prev_by_source: dict[str, float] = {}
+    for src, data in per_source.items():
+        if not isinstance(data, dict):
+            continue
+        block = data.get(key)
+        if not isinstance(block, dict):
+            continue
+        fc = block.get("forecast")
+        if isinstance(fc, (int, float)):
+            by_source[src] = float(fc)
+        prv = block.get("previous")
+        if isinstance(prv, (int, float)):
+            prev_by_source[src] = float(prv)
+
+    values = sorted(by_source.values())
+    n = len(values)
+    if n == 0:
+        median_fc = None
+    elif n % 2 == 1:
+        median_fc = values[n // 2]
+    else:
+        median_fc = round((values[n // 2 - 1] + values[n // 2]) / 2.0, 4)
+
+    spread = round(max(values) - min(values), 4) if n >= 2 else None
+    outlier = None
+    if n >= 3 and median_fc is not None:
+        # furthest source from median
+        outlier = max(by_source.items(), key=lambda kv: abs(kv[1] - median_fc))[0]
+        if abs(by_source[outlier] - median_fc) < 1e-9:
+            outlier = None  # all values agree within precision
+
+    prev_values = sorted(prev_by_source.values())
+    if not prev_values:
+        median_prev = None
+    elif len(prev_values) % 2 == 1:
+        median_prev = prev_values[len(prev_values) // 2]
+    else:
+        median_prev = round((prev_values[len(prev_values) // 2 - 1] + prev_values[len(prev_values) // 2]) / 2.0, 4)
+
+    return {
+        "forecast": median_fc,
+        "previous": median_prev,
+        "by_source": by_source,
+        "spread_pp": spread,
+        "outlier_source": outlier,
+        "n_sources": n,
+    }
+
+
 async def _cpi_consensus() -> dict:
     """Aggregated market-consensus forecast for the next CPI release.
 
-    All consensus values from TradingView are SA-basis (Bloomberg-print
-    convention). Core YoY is derived on the SAME SA-basis to keep units clean:
-        sa_yoy_forecast = (sa_latest_idx * (1 + sa_mom/100)) / sa_year_ago_idx - 1
-    No public NSA-MoM consensus exists, so an NSA YoY derivation would mix
-    bases and is omitted. Sources: TradingView (primary), ForexFactory (fallback).
+    Fetches three sources in parallel (TradingView, ForexFactory, Investing.com),
+    reconciles per-metric: median forecast across sources, max-min spread, and
+    outlier-source identification. All consensus values are SA-basis
+    (Bloomberg-print convention).
+
+    Core YoY is derived on SA-basis: sa_yoy = (latest_sa_idx * (1 + sa_mom/100))
+    / sa_year_ago_idx - 1. No public NSA-MoM consensus exists.
     """
     nxt = bls.next_release_after(date.today())
     if not nxt:
@@ -235,23 +301,30 @@ async def _cpi_consensus() -> dict:
     release_date = date.fromisoformat(nxt)
 
     async def _fetch_consensus():
-        try:
-            tv = await tradingview.fetch_us_cpi_for_release(release_date)
-            if tv:
-                return tv
-        except Exception as e:
-            tv = {"_error": f"tradingview failed: {e}"}
-        try:
-            ff = await forexfactory.fetch_us_cpi_for_release(release_date)
-            ff["_source_chain"] = "tradingview_failed,forexfactory_fallback"
-            return ff
-        except Exception as e:
-            return {"_error": f"both sources failed: tv={tv}; ff={e}"}
+        async def _safe(coro):
+            try:
+                return await coro
+            except Exception as e:
+                return {"_error": f"{type(e).__name__}: {e}"}
+        tv, ff, inv = await asyncio.gather(
+            _safe(tradingview.fetch_us_cpi_for_release(release_date)),
+            _safe(forexfactory.fetch_us_cpi_for_release(release_date)),
+            _safe(investing.fetch_us_cpi_for_release(release_date)),
+        )
+        return {"tradingview": tv, "forexfactory": ff, "investing": inv}
 
-    consensus = await cache_mod.cached(f"consensus_{nxt}", 1800, _fetch_consensus)
+    per_source = await cache_mod.cached(f"consensus_multi_{nxt}", 900, _fetch_consensus)
 
-    core_mom = consensus.get("core_mom", {}) or {}
-    core_mom_fc = core_mom.get("forecast")
+    # Reconcile per metric
+    reconciled = {
+        "core_mom": _reconcile_metric(per_source, "core_mom"),
+        "headline_mom": _reconcile_metric(per_source, "headline_mom"),
+        "core_yoy": _reconcile_metric(per_source, "core_yoy"),
+        "headline_yoy": _reconcile_metric(per_source, "headline_yoy"),
+    }
+
+    # Derive Core YoY on SA-basis from reconciled Core MoM forecast.
+    core_mom_fc = reconciled["core_mom"]["forecast"]
     derived_core_yoy_sa = None
     derivation: dict[str, Any] = {"method": None}
 
@@ -280,8 +353,8 @@ async def _cpi_consensus() -> dict:
                     forecast_idx = latest_idx * (1 + core_mom_fc / 100.0)
                     derived_core_yoy_sa = round((forecast_idx / year_ago["value"] - 1) * 100, 2)
                     derivation = {
-                        "method": "core_mom_forecast (SA) + bls_year_ago_idx (SA)",
-                        "basis": "SA - clean unit-match with TradingView Core MoM",
+                        "method": "median_core_mom_forecast (SA) + bls_year_ago_idx (SA)",
+                        "basis": "SA - clean unit-match with consensus Core MoM",
                         "latest_core_sa_idx": latest_idx,
                         "latest_period": f"{latest['year']}-{latest['month']:02d}",
                         "year_ago_core_sa_idx": year_ago["value"],
@@ -294,16 +367,31 @@ async def _cpi_consensus() -> dict:
         except Exception as e:
             derivation["method"] = f"derivation failed: {e}"
 
+    # Build legacy-shape blocks for downstream tools (cpi_trade_brief reads these).
+    def _legacy_block(metric_key: str) -> dict:
+        rec = reconciled[metric_key]
+        return {
+            "previous": rec["previous"],
+            "forecast": rec["forecast"],
+            "actual": None,
+            "period": None,
+            "date_utc": None,
+            "title": f"Reconciled {metric_key}",
+            "unit": "%",
+            "source": "median(tradingview,forexfactory,investing)",
+        }
+
     return {
         "release_date_et": nxt,
-        "basis_note": "All consensus values are SA-basis (Bloomberg-print convention).",
-        "headline_yoy": consensus.get("headline_yoy"),
-        "headline_mom": consensus.get("headline_mom"),
-        "core_mom": consensus.get("core_mom"),
-        "core_yoy": consensus.get("core_yoy"),  # often None - free APIs don't publish it
+        "basis_note": "All consensus values are SA-basis (Bloomberg-print convention). Forecast = median across available sources.",
+        "headline_yoy": _legacy_block("headline_yoy"),
+        "headline_mom": _legacy_block("headline_mom"),
+        "core_mom": _legacy_block("core_mom"),
+        "core_yoy": _legacy_block("core_yoy"),
         "core_yoy_derived_pct_sa": derived_core_yoy_sa,
         "core_yoy_derivation": derivation,
-        "raw_consensus": consensus,
+        "reconciliation": reconciled,
+        "raw_per_source": per_source,
     }
 
 
@@ -362,9 +450,27 @@ async def _cpi_trade_brief() -> dict:
     head_yoy_fc = _g(consensus, "headline_yoy", "forecast")  # SA (TradingView)
     head_yoy_nowcast = _g(nowcast, "headline", "yoy_pct")    # NSA (CL Fed)
 
+    recon = consensus.get("reconciliation") or {}
+    def _q(metric: str) -> dict:
+        r = recon.get(metric) or {}
+        return {
+            "by_source": r.get("by_source"),
+            "spread_pp": r.get("spread_pp"),
+            "outlier_source": r.get("outlier_source"),
+            "n_sources": r.get("n_sources"),
+        }
+    consensus_quality = {
+        "note": "Forecast = median across TradingView, ForexFactory, Investing.com. spread_pp > 0.05 indicates source disagreement.",
+        "core_mom": _q("core_mom"),
+        "headline_mom": _q("headline_mom"),
+        "core_yoy": _q("core_yoy"),
+        "headline_yoy": _q("headline_yoy"),
+    }
+
     return {
         "release_date_et": nxt,
         "release_time_de": "14:30 MEZ Sommerzeit (= 08:30 ET)",
+        "consensus_quality": consensus_quality,
         "primary_signal_core_mom": {
             "basis": "SA (Bloomberg-print + Fed-policy convention)",
             "previous_print": core_mom_prev_sa,

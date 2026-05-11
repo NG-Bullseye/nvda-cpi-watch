@@ -44,6 +44,17 @@ Stand: 2026-05-11
   - `context_headline_yoy` zeigt previous auf beiden Bases plus Forecast (SA) und Nowcast (NSA)
 - **Cache invalidiert** fuer `bls_latest`; alter 2-Series-Shape würde leere SA-Felder ergeben.
 
+## Multi-Source Consensus Reconciliation (2026-05-11 abend)
+
+- **Bug:** `cpi_consensus` zog TradingView primary, ForexFactory nur als Fallback wenn TV crasht. Bei Discrepancy zwischen Quellen kein Cross-Check → uebernahm blind den TV-Wert. Konkret beobachtet: TV Core MoM 0.4% vs FF/Investing 0.3% → ueberzeichneter Downside-Skew gegenueber Cleveland-Fed-Nowcast.
+- **Fix:** drei Quellen parallel-fetch, per-Metrik Median-Aggregation.
+  - **Neue Quelle `investing.py`**: scraped per-Indicator HTML-Pages (event-IDs 69/56/733/736 fuer US Headline-MoM / Core-MoM / Headline-YoY / Core-YoY).
+  - `_cpi_consensus` refaktoriert: `asyncio.gather()` ueber `tradingview` + `forexfactory` + `investing`. Pro Metrik (`core_mom`, `headline_mom`, `core_yoy`, `headline_yoy`) wird Median berechnet + Spread (max−min) + Outlier-Source identifiziert.
+  - **Cache-TTL gesenkt** auf 900s (war 1800s) — Forecasts reifen near-release.
+  - `cpi_trade_brief` zeigt jetzt `consensus_quality`-Block mit per-Source-Werten + Spread + Outlier pro Metrik. Forecast-Felder in `primary_signal_*` nutzen Median, nicht single-source.
+  - Core-YoY-Derivation nutzt Median Core MoM als Input.
+- **Validierung 2026-05-11**: TV als Outlier auf Core MoM (0.4 vs Median 0.3) und Headline YoY (3.4 vs 3.7) identifiziert. Nowcast-vs-Forecast-Skew korrigiert von −0.19pp auf −0.09pp (Core MoM).
+
 ## Bekannte Limitierungen
 
 - **Core CPI YoY Konsens**: keine Free-API publiziert das direkt → wir derivieren mathematisch aus Core MoM Forecast + BLS Vorjahresindex. Exakt sobald MoM-Konsens steht. Source-Transparenz im `_derivation`-Feld.
