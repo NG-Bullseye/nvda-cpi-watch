@@ -31,6 +31,19 @@ Stand: 2026-05-11
 - **Core YoY derivation** in `_cpi_consensus()`: (latest_core_idx * (1 + mom/100)) / year_ago_core_idx - 1
 - **`cpi_trade_brief`** befuellt jetzt forecast-Felder automatisch (vorher: null)
 
+## SA/NSA-Refactor (2026-05-11 nachmittag)
+
+- **Bug:** BLS-Client zog nur NSA (`CUUR*`); TradingView-Consensus + Cleveland-Fed-MoM sind SA-basis → unit-mismatch beim Vergleich. Verifiziert: SA-Serie liefert exakt die "previous"-Werte die TradingView zeigt (0.2% Core MoM, 0.9% Headline MoM für März).
+- **Fix in `bls.py`:** zusaetzliche Konstanten `SERIES_HEADLINE_SA`, `SERIES_CORE_SA` (CUSR-prefix).
+- **`cpi_latest`** liefert jetzt beide Bases: `headline.nsa / headline.sa / core.nsa / core.sa`. Convention: MoM-Headline = SA, YoY-official-press-release = NSA.
+- **`cpi_consensus` Core-YoY-Derivation** auf reine SA-Basis: SA-MoM-Forecast wird auf SA-year-ago-Index angewendet. Feld umbenannt: `core_yoy_derived_pct` → `core_yoy_derived_pct_sa`. NSA-YoY-Derivation entfaellt (kein public NSA-MoM-Consensus existiert).
+- **`cpi_trade_brief`** umstrukturiert auf MoM-first:
+  - `primary_signal_core_mom` (SA, unit-clean ueber BLS/TV/CL-Fed)
+  - `secondary_signal_headline_mom` (SA)
+  - `context_core_yoy` mit getrennten `sa_basis`- und `nsa_basis`-Bloecken (keine Mixing-Artefakte mehr)
+  - `context_headline_yoy` zeigt previous auf beiden Bases plus Forecast (SA) und Nowcast (NSA)
+- **Cache invalidiert** fuer `bls_latest`; alter 2-Series-Shape würde leere SA-Felder ergeben.
+
 ## Bekannte Limitierungen
 
 - **Core CPI YoY Konsens**: keine Free-API publiziert das direkt → wir derivieren mathematisch aus Core MoM Forecast + BLS Vorjahresindex. Exakt sobald MoM-Konsens steht. Source-Transparenz im `_derivation`-Feld.

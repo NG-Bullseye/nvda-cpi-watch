@@ -116,18 +116,31 @@ async def list_tools() -> list[types.Tool]:
 async def _cpi_latest() -> dict:
     async def _fetch():
         today = date.today()
-        data = await bls.fetch_series(
-            [bls.SERIES_HEADLINE, bls.SERIES_CORE],
+        return await bls.fetch_series(
+            [bls.SERIES_HEADLINE, bls.SERIES_CORE,
+             bls.SERIES_HEADLINE_SA, bls.SERIES_CORE_SA],
             start_year=today.year - 1,
             end_year=today.year,
         )
-        return data
     raw = await cache_mod.cached("bls_latest", 6 * 3600, _fetch)
-    headline = bls.normalize(raw.get(bls.SERIES_HEADLINE, []))
-    core = bls.normalize(raw.get(bls.SERIES_CORE, []))
+    h_nsa = bls.normalize(raw.get(bls.SERIES_HEADLINE, []))
+    c_nsa = bls.normalize(raw.get(bls.SERIES_CORE, []))
+    h_sa = bls.normalize(raw.get(bls.SERIES_HEADLINE_SA, []))
+    c_sa = bls.normalize(raw.get(bls.SERIES_CORE_SA, []))
     return {
-        "headline": headline[0] if headline else None,
-        "core": core[0] if core else None,
+        "headline": {
+            "nsa": h_nsa[0] if h_nsa else None,
+            "sa": h_sa[0] if h_sa else None,
+        },
+        "core": {
+            "nsa": c_nsa[0] if c_nsa else None,
+            "sa": c_sa[0] if c_sa else None,
+        },
+        "convention_note": (
+            "MoM market-headline = SA (what Bloomberg prints). "
+            "YoY official BLS press-release = NSA (12-month change). "
+            "Cross-check basis when comparing across sources."
+        ),
         "source": "BLS API v2",
     }
 
@@ -210,10 +223,11 @@ async def _cpi_nowcast() -> dict:
 async def _cpi_consensus() -> dict:
     """Aggregated market-consensus forecast for the next CPI release.
 
-    - Headline YoY/MoM + Core MoM: TradingView (primary), ForexFactory (fallback).
-    - Core YoY: derived from Core MoM forecast + BLS year-ago Core index.
-      Formula: core_yoy_forecast = (latest_core_idx * (1 + mom/100)) / year_ago_idx - 1
-      Reason: no free API publishes Core CPI YoY consensus directly.
+    All consensus values from TradingView are SA-basis (Bloomberg-print
+    convention). Core YoY is derived on the SAME SA-basis to keep units clean:
+        sa_yoy_forecast = (sa_latest_idx * (1 + sa_mom/100)) / sa_year_ago_idx - 1
+    No public NSA-MoM consensus exists, so an NSA YoY derivation would mix
+    bases and is omitted. Sources: TradingView (primary), ForexFactory (fallback).
     """
     nxt = bls.next_release_after(date.today())
     if not nxt:
@@ -236,68 +250,76 @@ async def _cpi_consensus() -> dict:
 
     consensus = await cache_mod.cached(f"consensus_{nxt}", 1800, _fetch_consensus)
 
-    # Derive Core YoY if we have Core MoM forecast + enough BLS history.
     core_mom = consensus.get("core_mom", {}) or {}
     core_mom_fc = core_mom.get("forecast")
-    derived_core_yoy = None
+    derived_core_yoy_sa = None
     derivation: dict[str, Any] = {"method": None}
 
     if core_mom_fc is not None:
-        async def _fetch_bls_core_history():
+        async def _fetch_bls_core_sa_history():
             today = date.today()
             return await bls.fetch_series(
-                [bls.SERIES_CORE],
+                [bls.SERIES_CORE_SA],
                 start_year=today.year - 2,
                 end_year=today.year,
             )
         try:
-            raw = await cache_mod.cached("bls_core_history_2y", 6 * 3600, _fetch_bls_core_history)
-            core_series = bls.normalize(raw.get(bls.SERIES_CORE, []))
-            if core_series:
-                # Latest = newest reported (= month BEFORE the release_date typically).
-                latest = core_series[0]
+            raw = await cache_mod.cached("bls_core_sa_history_2y", 6 * 3600, _fetch_bls_core_sa_history)
+            sa_series = bls.normalize(raw.get(bls.SERIES_CORE_SA, []))
+            if sa_series:
+                latest = sa_series[0]
                 latest_idx = latest["value"]
-                # Print period = the month the release REPORTS ON, i.e. the calendar month
-                # before the release date (April release -> April CPI, May release -> April CPI etc.).
-                # CPI releases publish data for the prior calendar month.
                 print_month = release_date.month - 1 or 12
                 print_year = release_date.year if release_date.month > 1 else release_date.year - 1
-                # Year-ago = same print-month, one year earlier.
                 year_ago = next(
-                    (o for o in core_series
+                    (o for o in sa_series
                      if o["year"] == print_year - 1 and o["month"] == print_month),
                     None,
                 )
                 if year_ago is not None:
                     forecast_idx = latest_idx * (1 + core_mom_fc / 100.0)
-                    derived_core_yoy = round((forecast_idx / year_ago["value"] - 1) * 100, 2)
+                    derived_core_yoy_sa = round((forecast_idx / year_ago["value"] - 1) * 100, 2)
                     derivation = {
-                        "method": "core_mom_forecast + bls_year_ago_index",
-                        "latest_core_idx": latest_idx,
+                        "method": "core_mom_forecast (SA) + bls_year_ago_idx (SA)",
+                        "basis": "SA - clean unit-match with TradingView Core MoM",
+                        "latest_core_sa_idx": latest_idx,
                         "latest_period": f"{latest['year']}-{latest['month']:02d}",
-                        "year_ago_core_idx": year_ago["value"],
+                        "year_ago_core_sa_idx": year_ago["value"],
                         "year_ago_period": f"{year_ago['year']}-{year_ago['month']:02d}",
                         "core_mom_forecast_pct": core_mom_fc,
                         "implied_forecast_idx": round(forecast_idx, 3),
                     }
                 else:
-                    derivation["method"] = "no year-ago BLS data point yet"
+                    derivation["method"] = "no SA year-ago BLS data point yet"
         except Exception as e:
             derivation["method"] = f"derivation failed: {e}"
 
     return {
         "release_date_et": nxt,
+        "basis_note": "All consensus values are SA-basis (Bloomberg-print convention).",
         "headline_yoy": consensus.get("headline_yoy"),
         "headline_mom": consensus.get("headline_mom"),
         "core_mom": consensus.get("core_mom"),
         "core_yoy": consensus.get("core_yoy"),  # often None - free APIs don't publish it
-        "core_yoy_derived_pct": derived_core_yoy,
+        "core_yoy_derived_pct_sa": derived_core_yoy_sa,
         "core_yoy_derivation": derivation,
         "raw_consensus": consensus,
     }
 
 
 async def _cpi_trade_brief() -> dict:
+    """Aggregated brief for the next CPI release.
+
+    Structure:
+      - primary_signal_core_mom: Core MoM on SA basis. Clean unit-match across
+        all three sources (BLS-SA previous print, TradingView SA forecast,
+        Cleveland Fed SA nowcast). This is the value Bloomberg-style traders
+        read off the print and the Fed-policy-relevant short-term signal.
+      - secondary_signal_headline_mom: same structure, headline MoM (SA).
+      - context_core_yoy: SA-derivation + NSA-official-press-release figure
+        with explicit basis labels (no mixing).
+      - context_headline_yoy: previous print on both bases + forecast/nowcast.
+    """
     nxt = bls.next_release_after(date.today())
     latest = await _cpi_latest()
     consensus = await _cpi_consensus()
@@ -318,54 +340,80 @@ async def _cpi_trade_brief() -> dict:
             return None
         return round(a - b, 2)
 
-    # Headline YoY
-    head_prev = _g(consensus, "headline_yoy", "previous") or _g(latest, "headline", "yoy_pct")
-    head_fc = _g(consensus, "headline_yoy", "forecast")
-    head_nowcast = _g(nowcast, "headline", "yoy_pct")
-
-    # Core YoY: consensus from free APIs is usually None - use derived
-    core_prev = _g(consensus, "core_yoy", "previous") or _g(latest, "core", "yoy_pct")
-    core_fc_direct = _g(consensus, "core_yoy", "forecast")
-    core_fc_derived = consensus.get("core_yoy_derived_pct")
-    core_fc = core_fc_direct if core_fc_direct is not None else core_fc_derived
-    core_nowcast = _g(nowcast, "core", "yoy_pct")
-
-    # Core MoM (the value Bloomberg-style traders actually watch on print)
-    core_mom_prev = _g(consensus, "core_mom", "previous")
+    # ─── Primary: Core MoM (SA - Bloomberg-print + Fed-policy convention) ─────
+    core_mom_prev_sa = _g(latest, "core", "sa", "mom_pct")
     core_mom_fc = _g(consensus, "core_mom", "forecast")
+    core_mom_nowcast = _g(nowcast, "core", "mom_pct")
+
+    # ─── Secondary: Headline MoM (SA) ─────────────────────────────────────────
+    head_mom_prev_sa = _g(latest, "headline", "sa", "mom_pct")
+    head_mom_fc = _g(consensus, "headline_mom", "forecast")
+    head_mom_nowcast = _g(nowcast, "headline", "mom_pct")
+
+    # ─── Context: Core YoY (SA derivation + NSA official figure) ──────────────
+    core_yoy_sa_prev = _g(latest, "core", "sa", "yoy_pct")
+    core_yoy_sa_fc_derived = consensus.get("core_yoy_derived_pct_sa")
+    core_yoy_nsa_prev = _g(latest, "core", "nsa", "yoy_pct")
+    core_yoy_nowcast = _g(nowcast, "core", "yoy_pct")  # CL Fed convention: NSA
+
+    # ─── Context: Headline YoY ────────────────────────────────────────────────
+    head_yoy_sa_prev = _g(latest, "headline", "sa", "yoy_pct")
+    head_yoy_nsa_prev = _g(latest, "headline", "nsa", "yoy_pct")
+    head_yoy_fc = _g(consensus, "headline_yoy", "forecast")  # SA (TradingView)
+    head_yoy_nowcast = _g(nowcast, "headline", "yoy_pct")    # NSA (CL Fed)
 
     return {
         "release_date_et": nxt,
         "release_time_de": "14:30 MEZ Sommerzeit (= 08:30 ET)",
-        "headline_yoy": {
-            "previous": head_prev,
-            "forecast": head_fc,
-            "nowcast": head_nowcast,
-            "forecast_vs_previous_pp": _spread(head_fc, head_prev),
-            "nowcast_vs_forecast_pp": _spread(head_nowcast, head_fc),
+        "primary_signal_core_mom": {
+            "basis": "SA (Bloomberg-print + Fed-policy convention)",
+            "previous_print": core_mom_prev_sa,
+            "forecast": core_mom_fc,
+            "nowcast": core_mom_nowcast,
+            "forecast_vs_previous_pp": _spread(core_mom_fc, core_mom_prev_sa),
+            "nowcast_vs_forecast_pp": _spread(core_mom_nowcast, core_mom_fc),
+            "interpretation": (
+                "Print BELOW forecast tends to be bullish for rate-sensitive Tech (NVDA, etc.); "
+                "ABOVE forecast tends to be bearish. Nowcast-vs-forecast gap = "
+                "asymmetric-surprise skew. DATA ONLY - not a recommendation."
+            ),
         },
-        "core_yoy": {
-            "previous": core_prev,
-            "forecast": core_fc,
-            "forecast_source": "derived (core_mom + bls)" if core_fc_direct is None and core_fc_derived is not None else ("consensus_api" if core_fc_direct is not None else None),
-            "nowcast": core_nowcast,
-            "forecast_vs_previous_pp": _spread(core_fc, core_prev),
-            "nowcast_vs_forecast_pp": _spread(core_nowcast, core_fc),
+        "secondary_signal_headline_mom": {
+            "basis": "SA",
+            "previous_print": head_mom_prev_sa,
+            "forecast": head_mom_fc,
+            "nowcast": head_mom_nowcast,
+            "forecast_vs_previous_pp": _spread(head_mom_fc, head_mom_prev_sa),
+            "nowcast_vs_forecast_pp": _spread(head_mom_nowcast, head_mom_fc),
+        },
+        "context_core_yoy": {
+            "sa_basis": {
+                "previous_print": core_yoy_sa_prev,
+                "forecast_derived": core_yoy_sa_fc_derived,
+                "note": "SA_MoM_forecast compounded onto SA year-ago index. Clean unit-match within block.",
+            },
+            "nsa_basis": {
+                "previous_print_official": core_yoy_nsa_prev,
+                "nowcast": core_yoy_nowcast,
+                "note": (
+                    "BLS press-release '12-month change' is NSA. Cleveland Fed YoY follows same NSA "
+                    "convention. No public NSA-MoM consensus -> no NSA forecast derivable."
+                ),
+            },
             "_derivation": consensus.get("core_yoy_derivation"),
         },
-        "core_mom": {
-            "previous": core_mom_prev,
-            "forecast": core_mom_fc,
-            "note": "Core MoM is the value Bloomberg traders read directly off the print.",
+        "context_headline_yoy": {
+            "previous_print_nsa": head_yoy_nsa_prev,
+            "previous_print_sa": head_yoy_sa_prev,
+            "forecast_sa": head_yoy_fc,
+            "nowcast_nsa": head_yoy_nowcast,
         },
-        "interpretation_hint": (
-            "Core CPI is the key reading for Fed policy expectations and Big-Tech sensitivity. "
-            "Print BELOW forecast tends to be bullish for rate-sensitive Tech (NVDA, etc.); "
-            "print ABOVE forecast tends to be bearish. Surprise magnitude drives move size. "
-            "Cross-check Core MoM (Bloomberg headline) and Core YoY (Fed-trajectory). "
-            "DATA ONLY - not a recommendation."
-        ),
-        "sources": ["BLS", "TradingView", "ForexFactory (fallback)", "Cleveland Fed"],
+        "sources": [
+            "BLS (NSA: CUUR*, SA: CUSR*)",
+            "TradingView (SA basis)",
+            "ForexFactory (SA basis, fallback)",
+            "Cleveland Fed (MoM=SA, YoY=NSA by convention)",
+        ],
     }
 
 

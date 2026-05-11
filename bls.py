@@ -8,8 +8,13 @@ from typing import Any
 import httpx
 
 BLS_URL = "https://api.bls.gov/publicAPI/v2/timeseries/data/"
+# NSA (Not Seasonally Adjusted) - BLS press-release "12-month change" YoY basis.
 SERIES_HEADLINE = "CUUR0000SA0"
 SERIES_CORE = "CUUR0000SA0L1E"
+# SA (Seasonally Adjusted) - Bloomberg/Reuters MoM headline basis; market consensus
+# from TradingView quotes SA values. Use for MoM comparisons.
+SERIES_HEADLINE_SA = "CUSR0000SA0"
+SERIES_CORE_SA = "CUSR0000SA0L1E"
 
 
 def _api_key() -> str | None:
