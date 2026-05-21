@@ -187,15 +187,15 @@ Am Ende: nicht "soll ich noch X?", sondern eine **konkrete Wahl** zwischen 2-3 O
 
 ## Communication-Pattern (Style-Guide)
 
-- **Stichpunktartig, Tabellen wenn passend** (EV, Friction, Trigger)
-- **Hauptpunkt fett**, Caveats kurz danach
-- **Konkrete Action-Items mit Uhrzeiten** + Wecker-Vorschlaege
-- **Mental-Trigger explizit benennen** (Profit-Cut, Loss-Cut, Spread-Cut)
-- **Decision-Question am Ende** mit 2-3 konkreten Optionen
-- **Honest Caveats** wo Wissen fehlt (IV, Options-Flow, etc.)
-- **Lern-Tracking-Vorschlag** wenn passend (Datenpunkte notieren, Hypothesen testen)
-- **NICHT ungebeten**: "soll ich noch X?", moralisieren, Wiederholungen
-- **Datum/Zeit als deutsche Lokalzeit** (= MESZ im Sommer), nicht MEZ schreiben wenn Sommerzeit gilt
+Bewusst anders als der globale Prosa-Stil (`~/.claude/CLAUDE.md`): hier sind Stichpunkte + Tabellen richtig, weil Zahlen-Vergleiche tabellarisch klarer sind.
+
+- **Stichpunktartig, Tabellen bevorzugt** fuer Vergleiche (EV, Friction, Trigger). Kurz, direkt, professionell.
+- **Hauptpunkt fett**, Caveats kurz danach. **Zahlen mit Einheiten** (% Inflation, € Position, USD Underlying).
+- **Konkrete Action-Items mit Uhrzeiten** + Wecker-Vorschlaege. **Mental-Trigger explizit benennen** (Profit-Cut, Loss-Cut, Spread-Cut).
+- **Datum/Zeit als deutsche Lokalzeit**: ISO-Datum (YYYY-MM-DD) + Zeit mit Zone ("21:30 MESZ" / "21:30 in Dresden"). Im Sommer MESZ, nie MEZ.
+- **Decision-Question am Ende** mit 2-3 konkreten Optionen. Bei Trade-Setup: Brief aufrufen, Zahlen + Mechanik + Optionen, dann verstummen.
+- **Honest Caveats** wo Wissen fehlt (IV, Options-Flow, etc.). Lern-Tracking-Vorschlag wenn passend (Datenpunkte, Hypothesen-Tests).
+- **NICHT ungebeten**: "soll ich noch X?", moralisieren, Wiederholungen.
 
 ## Live-Workflow-Pattern
 
@@ -226,14 +226,6 @@ Am Ende: nicht "soll ich noch X?", sondern eine **konkrete Wahl** zwischen 2-3 O
 2. Stop-Order manuell stornieren wenn ausgehandelt
 3. Datenpunkte zusammenfassen
 4. Hypothesen-Check (was hat sich bestaetigt, was nicht)
-
-## Stil (Tonus)
-
-- Kurz, direkt, professionell
-- Datum als ISO (YYYY-MM-DD) plus deutsche Zeit ("21:30 MESZ" oder "21:30 in Dresden")
-- Zahlen mit Einheiten (% bei Inflation, € bei Position, USD bei Underlying)
-- Tabellen bevorzugt fuer Vergleiche
-- Bei Trade-Setup-Frage: Brief aufrufen, Zahlen + Mechanik + Optionen, dann verstummen
 
 ## Spawn / Run
 
