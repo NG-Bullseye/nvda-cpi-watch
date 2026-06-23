@@ -15,13 +15,13 @@ Stand: 2026-05-11
 | `.mcp.json` + `.env.example` | done |
 | CLAUDE.md + README + vision | done |
 | Smoke-Test BLS live | done |
-| Smoke-Test Finnhub | done (Key in `~/.bashrc`) |
+| Smoke-Test Finnhub | done |
 | Smoke-Test Nowcast live | done |
 | Initial commit | done (f0f9e15) |
 
 ## Key-Setup
 
-`FINNHUB_API_KEY` ist in `~/.bashrc` exportiert (analog zu `ESPHOME_API_KEY`). Wird vererbt an `claude`-Prozesse die aus interaktiver Shell starten. `python-dotenv` liest zusaetzlich `.env` falls vorhanden - env wins.
+`FINNHUB_API_KEY` wird aus der Umgebung oder `.env`-Datei gelesen. `python-dotenv` liest `.env` falls vorhanden — Shell-Env-Vars haben Vorrang.
 
 ## Konsens-Layer (2026-05-11 hinzu)
 
@@ -64,7 +64,7 @@ Stand: 2026-05-11
 
 ## Naechste Schritte
 
-- Agent-Spawn testen: `tmux new-session -d -s nvda-cpi-watch "cd ~/repos/nvda-cpi-watch && claude --mcp-config .mcp.json"`
+- Agent-Spawn testen: `cd nvda-cpi-watch && claude --mcp-config .mcp.json`
 - Phase 5: Daytrading-Stack (siehe `vision.md` - Quote/Levels/IV/Earnings-Patterns)
 - NVDA Earnings 2026-05-20 AMC: Pre-Brief kurz vor Release ziehen
 

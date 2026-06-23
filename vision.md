@@ -28,7 +28,7 @@ Agent laeuft als langlebige tmux-Session. Cron-getrieben prueft er taeglich auf 
 - NVDA-Earnings in <= N Tagen → Pre-Brief
 
 Output-Kanaele (Auswahl, zu entscheiden):
-- Telegram-Bot (an Leos triage-Bot)
+- Telegram-Bot
 - Cortex-Event ueber Redis-Stream
 - HA-Notification
 
@@ -47,11 +47,11 @@ Nach jedem Release/Earnings:
 - Kurz-Report (~150 Worte) schreiben: was kam, was hatte der Markt erwartet, wo war der Spread
 - Optional: NVDA-Kursreaktion in den ersten 60min via Finnhub Quote-API
 
-Output → `~/repos/nvda-cpi-watch/reports/YYYY-MM-DD.md` plus Telegram-Push.
+Output → `reports/YYYY-MM-DD.md` plus Telegram-Push.
 
 ## Phase 4 — Kombiniert
 
-Watcher + Analyst in einer langlebigen Agent-Session. Self-healing-Pattern (siehe `~/.claude/CLAUDE.md` "Live-Self-Healing-Pattern"): strukturierte Logs, Live-Tail-faehig, Watchdog-MCP kann Anomalien (Forecast-Drift, Tool-Errors) detektieren.
+Watcher + Analyst in einer langlebigen Agent-Session. Self-healing-Pattern: strukturierte Logs, Live-Tail-faehig, Anomalie-Detection (Forecast-Drift, Tool-Errors).
 
 Ggf. erweitern um:
 - Weitere Tech-Tickers (AAPL, MSFT, GOOGL) konfigurierbar
@@ -61,9 +61,9 @@ Ggf. erweitern um:
 
 ## Phase 5 — Daytrading-Stack (Scope-Erweiterung 2026-05-11)
 
-Leos Vision (Originalzitat): "am ende wollen wir dass der mcp alles liefert was wir zum daytraden und earnings prediction etc brauchen".
+Das Ziel: ein MCP-Server der alle Daten fuer Daytrading und Earnings-Prediction liefert.
 
-Daraus abgeleitet — Tools die ein Daytrader / Earnings-Trader an einem typischen Morgen braucht:
+Tools die ein Daytrader / Earnings-Trader an einem typischen Morgen braucht:
 
 ### 5a. Pre-Market & Intraday Levels
 - `quote_now(symbol)` — letzter Trade, Pre-Market-Move, Tages-Open/High/Low (Finnhub `/quote`)
@@ -84,7 +84,7 @@ Daraus abgeleitet — Tools die ein Daytrader / Earnings-Trader an einem typisch
 - `earnings_estimate_drift(symbol)` — sind die Schaetzungen die letzten 30/60/90 Tage nach oben oder unten revidiert worden (= sell-side sentiment trend)
 - `earnings_whisper(symbol)` — wenn Quelle gefunden: Whisper-Estimate vs Sell-Side-Consensus (typisch Estimize-style)
 
-### 5d. NVDA-spezifisch (weil Hauptkandidat in Leos Trades)
+### 5d. NVDA-spezifisch (fokussierter Use-Case)
 - `nvda_chip_cycle_context` — wo sind wir im Cycle? AI-CapEx-Datenpunkte aus Hyperscaler-Earnings, Datacenter-Revenue-Trends
 - `nvda_competitor_signals` — AMD/Broadcom Earnings/Guidance als leading indicator
 - `nvda_options_skew` — Call/Put-Skew, unusual flow (falls Free-Source — sonst Phase 5e)

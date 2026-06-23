@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "nvda-cpi-watch": {
-      "command": "/home/leona/repos/nvda-cpi-watch/venv/bin/python",
-      "args": ["/home/leona/repos/nvda-cpi-watch/server.py"]
+      "command": "venv/bin/python",
+      "args": ["server.py"]
     }
   }
 }
