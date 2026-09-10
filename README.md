@@ -64,7 +64,7 @@ Cache-Files unter `cache/*.json` (gitignored). TTLs: BLS 6h, Finnhub Earnings 1h
 
 ## Phase 1 = passiv
 
-Aktuelle Phase: on-demand Daten-Server. Keine Alerts, keine Cron-Jobs, keine HA-Integration. Roadmap → `vision.md`.
+Aktuelle Phase: on-demand Daten-Server. Keine Alerts, keine Cron-Jobs, keine HA-Integration. Roadmap → `docs/vision.md`, Stand → `docs/STATUS.md`.
 
 ## Disclaimer
 
