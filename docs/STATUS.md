@@ -11,9 +11,9 @@ Stand: 2026-05-11
 | `finnhub.py` (Earnings + Economic Calendar) | done |
 | `clevelandfed.py` (Nowcast scrape) | done, fragil |
 | `cache.py` (File-TTL) | done |
-| `server.py` (8 Tools, stdio) | done |
+| `server.py` (9 Tools, stdio) | done |
 | `.mcp.json` + `.env.example` | done |
-| CLAUDE.md + README + vision | done |
+| README + vision | done |
 | Smoke-Test BLS live | done |
 | Smoke-Test Finnhub | done |
 | Smoke-Test Nowcast live | done |

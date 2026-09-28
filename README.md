@@ -6,11 +6,8 @@ MCP-Server + Repo-Agent fuer NVDA-Earnings + US-CPI Daten. Liefert historische W
 
 ```bash
 cd ~/repos/nvda-cpi-watch
-cp .env.example .env
+./bootstrap.sh   # idempotent: venv + requirements + .env aus Vorlage
 # Edit .env: FINNHUB_API_KEY=... (free key from https://finnhub.io/register)
-
-# Dependencies sind im venv installiert. Falls nicht:
-python3 -m venv venv && venv/bin/pip install -r requirements.txt
 
 # Agent spawnen (Repo-MCP wird automatisch geladen via .mcp.json):
 tmux new-session -d -s nvda-cpi-watch "cd ~/repos/nvda-cpi-watch && claude --mcp-config .mcp.json"
