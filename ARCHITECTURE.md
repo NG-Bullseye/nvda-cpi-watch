@@ -1,5 +1,7 @@
 # ARCHITECTURE — nvda-cpi-watch
 
+> Stand 2026-11-10 · geprüft gegen e4b61c9
+
 ## Deep Modules — CPI- und NVDA-Daten als MCP-Tools (Phase 1, passiv)
 
 Flow: ein Tool-Call über stdio landet in `server.py::call_tool`, der Handler holt Daten über einen Quell-Client, jeder Abruf läuft durch den File-Cache mit TTL. Die Sequenz lebt in `server.py::call_tool`. Jede Innenleben-Zelle ist datei:zeile und muss per grep -n treffen.
@@ -35,3 +37,29 @@ Flow: ein Tool-Call über stdio landet in `server.py::call_tool`, der Handler ho
 ## Standard: Deep Modules + Flow
 
 Standard R1–R5 steht in `~/repos/speech-engine/ARCHITECTURE.md`.
+
+<!-- graph:auto:start -->
+## Graph-Auto (generated 2026-11-10 by `bin/arch_auto_block.py`, do not edit by hand)
+
+**Deep Modules** (cross-file edges):
+- `server.py` — 14
+- `clevelandfed.py` — 4
+- `tradingview.py` — 4
+- `forexfactory.py` — 3
+- `investing.py` — 3
+- `bls.py` — 2
+- `cache.py` — 2
+- `finnhub.py` — 2
+
+**Interfaces** (modules/symbols imported or called from other files):
+- `bls.py` — used by 1 files
+- `cache.py` — used by 1 files
+- `clevelandfed.py` — used by 1 files
+- `finnhub.py` — used by 1 files
+- `forexfactory.py` — used by 1 files
+- `investing.py` — used by 1 files
+- `tradingview.py` — used by 1 files
+
+**Bus connections** (redis / route / http nodes of the house graph):
+- none
+<!-- graph:auto:end -->
